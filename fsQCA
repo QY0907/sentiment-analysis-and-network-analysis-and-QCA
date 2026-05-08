@@ -1,0 +1,157 @@
+# 一、设置工作目录
+setwd("D:/研究生/代码/增强版fsqca")
+
+# 二、载入必要的程序包
+library(QCA)
+library(SetMethods)
+library(admisc)
+library(ggrepel)
+library(ggplot2)
+
+# 三、导入原始数据
+qca <- read.csv("示例数据.csv",  row.names = 1, fileEncoding = "GBK")
+
+# 四、校准
+# （一）定义汇总校准函数
+calibrations <- list(
+  E = c(e = -1.66346605, c = 0.2651475, i = 5.2127469),
+  T = c(e = 0, c = 0.5, i = 1),
+  C = c(e = -0.9792311, c = 1.79957, i =3.173493 ),
+  L = c(e = 0.00096855, c = 0.0039555, i = 0.09505),
+  D = c(e = 0.001, c = 0.0055, i = 0.1198),
+  M = c(e = 51.26, c = 704.9333, i = 501470.7525),
+  I = c(e = 0, c = 0.009, i = 0.6565)
+)
+
+# （二）使用循环为每个变量应用校准
+for (var in names(calibrations)) {
+  qca[[var]] <- calibrate(qca[[var]], type = "fuzzy", method = "direct", thresholds = calibrations[[var]])
+}
+
+# （三）导出校准后的数据
+write.csv(qca, "校准后(辟谣后).csv", fileEncoding = "GBK")
+
+# （四）读取校准后数据
+qca <- read.csv("校准后(辟谣后).csv", row.names = 1, fileEncoding = "GBK")
+
+# 五、单个条件的必要性分析
+
+# （一）选取条件变量
+conditions <- qca[, 1:6]
+
+# （二）必要性分析
+pof(conditions, E, data = qca)
+pof(1-conditions, E, data = qca)
+pof(conditions, ~E, data = qca)
+pof(1-conditions, ~E, data = qca)
+
+# （三）绘制散点图
+XYplot(X1, Y, data = qca, jitter = TRUE, clabels = rownames(qca))
+XYplot(X1, Y, data = qca, jitter = TRUE, clabels = seq(nrow(qca)))
+
+# 六、条件组态的充分性分析（组态分析）
+# （一）构建真值表
+zzb <- truthTable(qca, outcome = "~E", conditions = "T,C,L,D,M,I", 
+                  incl.cut = 0.8, n.cut = 1, pri.cut = 0.6, 
+                  show.cases = TRUE, sort.by = "OUT", complete = TRUE)
+zzb
+
+# （二）寻找必要的组合，ron.cut代表必要相关性，参考标准为0.6
+sp <- superSubset(qca, outcome = "~E", conditions = "T,C,L,D,M,I", 
+                  incl.cut = 0.90, ron.cut = 0.56)
+sp
+
+# （三）寻找矛盾的逻辑余项
+findRows(obj = zzb, type = 2)
+
+# （四）寻找一致性异常的案例
+zzb1 <- truthTable(qca, outcome = "~E", conditions = "T,C,L,D,M,I", 
+                  incl.cut = 0.7, n.cut = 1, pri.cut = 0.65, 
+                  show.cases = TRUE, sort.by = "OUT", complete = TRUE, dcc = TRUE)
+zzb1
+
+# （五）清洗真值表
+newzzb <- esa(oldtt = zzb, nec_cond = c("L + M","D + M"), 
+           untenable_LR = c("~T*~C*~L*D*M*~I","~T*~C*~L*D*M*I","~T*~C*L*~D*M*~I","~T*~C*L*~D*M*~I","~T*~C*L*D*M*~I","~T*~C*L*D*M*I","~T*C*L*~D*M*I","T*C*~L*~D*~M*I","T*~C*~L*D*M*I","T*~C*L*~D*~M*~I","T*~C*L*~D*~M*~I","T*~C*L*~D*M*I","T*~C*L*D*~M*~I","T*~C*L*D*M*I","T*C*~L*D*~M*~I","T*C*~L*D*~M*I","T*C*~L*D*M*I","T*C*L*~D*~M*~I","T*C*L*~D*~M*I","T*C*L*~D*M*I","T*C*L*D*~M*~I","T*C*L*D*M*I"))
+
+# （六）查看新的真值表
+newzzb
+
+#################以下内容为仅针对逻辑余项进行必要性声明#########################
+
+# 清洗真值表（针对逻辑余项修改）
+logical_remainders <- zzb$tt[zzb$tt$OUT == "?", ]  # 提取逻辑余项
+
+# 仅对逻辑余项应用 esa 函数
+processed_remainders <- esa(
+  oldtt = list(tt = logical_remainders),
+  nec_cond = c("X3+~X4+X6"),
+  untenable_LR = c("X1*X2*X3*~X4*~X5*~X6")
+)
+
+# 生成新的真值表
+newzzb <- zzb  # 复制原始真值表
+newzzb$tt[zzb$tt$OUT == "?", ] <- processed_remainders$tt  # 更新逻辑余项
+
+# 查看新的真值表
+newzzb
+
+##################################结束##########################################
+
+
+# （七）求（增强版）复杂解
+# 1.查看复杂解
+c <- minimize(newzzb, details = TRUE)
+c
+
+# 2.查看复杂解所有的质蕴含项
+c$PIchart
+
+# （八）求增强版简单解
+# 1.查看简单解
+p <- minimize(newzzb, include = "?", details = TRUE)
+p
+
+# 2.查看简单解所有的质蕴含项
+p$PIchart
+
+# 3.查看所有有贡献的逻辑余项
+p$SA
+
+# （九）求增强版中间解
+# 1.查看中间解
+i <- minimize(newzzb, include = "?", dir.exp= "1,1,1,1,1,1", details = TRUE)
+i
+
+# 2.寻找符合方向预期的逻辑余项（容易的反事实）
+i$i.sol$C1P1$EC
+
+# 3.寻找不符合方向预期的逻辑余项（困难的反事实）
+i$i.sol$C1P1$DC
+
+# 4.查看所有质蕴含项
+i$i.sol$C1P1$PIchart
+
+# （十）绘制典型案例散点图
+# 1.计算组态的隶属度
+sol <- compute(T*~L*~D*I, data = qca)
+
+# 2.设置只显示典型案例
+col <- rep("black", nrow(qca)) 
+col[sol < 0.5 | qca$Y < 0.5] -> "NA"
+clabels <- logical(nrow(qca))
+clabels[sol > 0.5 & qca$Y > 0.5] <- TRUE 
+
+# 3.绘制散点图
+XYplot(sol, E, data = qca, 
+       jitter = TRUE, clabels = clabels, model = TRUE,
+       cex = 0.7,
+       col = col, bg = col, xlab = "T*~L*~D*I")
+
+# （十一） 绘制维恩图
+runGUI()
+
+
+
+
+
